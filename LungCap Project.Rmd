@@ -1,0 +1,277 @@
+---
+title: "LungCapacity"
+author: "Batoul Kalot"
+output: prettydoc::html_pretty
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
+library(readr)
+library(tidyverse)
+library(gt)
+library(lsr)
+```
+
+## Loading LungCap data
+
+![](images/doctors-using-transparent-tablet-with-hologram-medical-technology.jpg){width="393"}
+
+```{r echo=FALSE}
+data <- read_csv("C:/Users/Lenovo/Desktop/LungCapData.csv")
+head(data) %>% gt() %>% 
+  opt_stylize(style=2,color="red")
+```
+
+## Questions
+
+**1. What are the most factors affecting the LungCap?**
+
+**2. Does the Gender have a huge effect on the Cap volume?**
+
+*First we will arrange LungCap as normal value between 4-6 L*
+
+[European Respiratory Journal](http://erj.ersjournals.com/content/26/3/511)
+
+### Preparing data
+
+```{r}
+hist(data$LungCap,xlab="LungCap",ylab="Count",
+     main="Variation of LungCap")
+data_na_counts <- data %>% 
+  summarize(across(everything(),
+                   \(x)mean(is.na(x))))
+```
+
+```{r echo=TRUE}
+gt(data_na_counts)
+```
+
+**No NA's in all variables.**
+
+```{r}
+min(data$LungCap)
+max(data$LungCap)
+```
+
+**Our recorded data varies between 0.5 and 14.6 L**
+
+```{r}
+data <- data %>%
+  mutate(disease = (LungCap<4|LungCap>6))
+```
+
+```{r}
+data %>% 
+  ggplot(aes(x=Gender,
+             y=LungCap))+
+  geom_boxplot()
+```
+
+**As observed the variance of both genders is approximately** **the same with slightly higher by males**
+
+
+## Visualizing Smoke with LungCap
+
+```{r}
+data %>% 
+  ggplot(aes(x=Smoke,
+             y=LungCap,
+             color=Gender))+
+  geom_boxplot()
+```
+
+**For smokers median of LungCap volume is somewhat higher,** **especially for men.**
+
+#### Checking the relation between Smoking and prob of disease!
+```{r}
+tab <- table(data$disease, data$Smoke)
+chi <- chisq.test(tab, correct=T)
+```
+
+```{r}
+print(chi)
+```
+
+**P-value not very significant.**
+
+```{r}
+cramersV(tab)
+```
+**Very small effect size**
+
+### T_test to ensure the small difference by smoke and cap
+```{r}
+t.test(data$LungCap ~ data$Smoke)
+```
+
+**Small p-value but not too much indicating the small effect of Smoke on LungCap**
+
+**Is there an association between Caesarean  and LungCap??**
+
+```{r}
+data %>% 
+  ggplot(aes(x=Caesarean,
+             y=LungCap))+
+  geom_boxplot()
+```
+
+**No measurable effect**
+
+### Transforming Age into categorical
+
+```{r}
+range(data$Age)
+
+Agegroups <- cut(data$Age, breaks = c(0,9,14,19),
+                 labels = c("Children","Youth","Adults"))
+data <- data %>% 
+  mutate(Agegroups)
+```
+
+# Relation of Agegroups and Lung Capacity
+
+```{r}
+attach(data)
+boxplot(LungCap ~ Agegroups)
+```
+
+```{r}
+attach(data)
+ANOVA <- aov(LungCap ~ Agegroups)
+```
+
+```{r}
+summary(ANOVA)
+```
+
+**Very Small p-value indicating significance of Agegroups on the LungCap**
+
+```{r}
+attach(data)
+cor(Height, LungCap)
+```
+
+**Very high association**
+
+### Plotting Height with disease probability
+
+```{r}
+data %>% 
+  ggplot(aes(x=Height,
+             fill=disease))+
+  geom_histogram(width=15)
+
+```
+
+
+### Checking Height plot with LungCap volume
+
+```{r}
+data %>% 
+  ggplot(aes(x=Height,
+             y=LungCap))+
+  geom_point()+
+  geom_smooth(method="lm",se=FALSE)
+```
+
+**There exists a linear relation between height and Lung Capacity**
+
+
+## Building the Model--
+```{r}
+model1 <- glm(disease ~ Height,    
+             data=data,
+             family="binomial")
+```
+
+```{r}
+summary(model1) 
+```
+**Statistically Significant P-value for Height predictor on the probability of the disease(<4L|>6L)**
+
+```{r}
+model2 <- glm(disease ~ Height + Agegroups,    
+             data=data,
+             family="binomial")
+```
+
+```{r}
+summary(model2) 
+```
+
+**All significant P-values for the dummy variables in Age group, with lower AIC in this model.**
+
+**Model 2 is more fitting**
+
+### Checking if there interaction between Height and Age!
+```{r}
+model3 <- glm(disease ~ Height*Agegroups,    
+             data=data,
+             family="binomial")
+```
+
+```{r}
+summary(model3)
+```
+**Lower AIC but with some high p-values so prefer not to complex the model**
+
+
+# For deep classification
+
+## Split data
+
+```{r}
+library(tidymodels)
+ set.seed(2)
+ split <- initial_split(data,
+                        prop=.80,
+                        strata=disease)
+ data_train <- training(split) 
+ data_test <- testing(split)
+ 
+```
+
+## Build the  training model
+```{r}
+model <- glm(disease ~ Height + Agegroups,
+              data=data_train,
+              family="binomial")
+```
+
+```{r}
+summary(model)
+```
+**Significant p-values for both predictors.**
+
+
+## evaluate the model on testing set
+
+```{r}
+ data_test <- data_test %>% 
+   mutate(disease_prob = predict(model,
+                                data_test,
+                                type= "response"),
+          disease_pred = ifelse(disease_prob > .5, 1, 0))
+ 
+```
+
+```{r}
+t <- table(data_test$disease,
+            data_test$disease_pred) 
+accuracy <- sum(diag(t))/sum(t)
+```
+
+```{r}
+print(accuracy)
+```
+        
+**The accuracy of our model is 82%**
+
+**Then We can say based on our Analysis on this dataset,**
+**LungCap and probability of abnormal volume is affected by** **Height and Age of people**
